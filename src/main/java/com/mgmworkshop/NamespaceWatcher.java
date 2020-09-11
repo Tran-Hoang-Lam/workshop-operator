@@ -36,7 +36,7 @@ public class NamespaceWatcher {
                             .list()
                             .getItems()
                             .stream()
-                            .filter(isPodRabbitCorrect)
+                            .filter(isRabbitCorrect)
                             .findFirst()
                             .orElse(new Pod());
                 });
@@ -44,23 +44,24 @@ public class NamespaceWatcher {
 
             @Override
             public void onClose(KubernetesClientException cause) {
-
+                if (cause != null) {
+                    cause.printStackTrace();
+                    System.exit(-1);
+                }
             }
         });
     }
 
-    private final Predicate<Pod> isPodRabbitCorrect = pod -> {
-        String podName = pod.getMetadata().getName();
-        if (podName.startsWith("rabbit")) {
-            Optional<Container> container = pod.getSpec().getContainers().stream().findFirst();
-
-            if (container.isPresent()) {
-                Container rabbitContainer = container.get();
-                List<EnvVar> envList = rabbitContainer.getEnv();
-
-            }
-            return true;
-        }
+    private final Predicate<Pod> isRabbitPod = pod -> pod.getMetadata().getName().startsWith("rabbit");
+    private final Predicate<Pod> isRabbitCorrect = pod -> {
+        pod.getSpec().getContainers()
+                .stream()
+                .findFirst()
+                .map(container -> {
+                    container.getEnv()
+                            .stream()
+                    return false;
+                });
         return true;
     };
 }
