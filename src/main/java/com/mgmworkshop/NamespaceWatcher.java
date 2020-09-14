@@ -3,6 +3,7 @@ package com.mgmworkshop;
 import com.mgmworkshop.cr.OperatorResource;
 import com.mgmworkshop.cr.OperatorResourceDoneable;
 import com.mgmworkshop.cr.OperatorResourceList;
+import com.mgmworkshop.model.CheckResult;
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
@@ -42,8 +43,7 @@ public class NamespaceWatcher {
 
                     pods.forEach(pod -> {
                         checkRabbitPod(pod);
-                        List<EnvVar> envList = pod.getSpec().getContainers().stream().findFirst().get().getEnv();
-
+                        checkOrderPod(pod, client);
                     });
                 });
             }
@@ -64,16 +64,52 @@ public class NamespaceWatcher {
         }
     }
 
-    private void checkOrderPod (Pod pod, DefaultKubernetesClient client) {
+    private void checkOrderPod (Pod pod, NamespacedKubernetesClient client) {
         if (isPod(pod, "order")) {
             checkEnvName(pod, ORDER_ENV_LIST);
             pod.getSpec().getContainers().stream().findFirst()
                     .get().getEnv()
-                    .forEach(envVar -> {
-                        if (envVar.getName().equals("RABBIT_HOST") && isRabbitHostEnvValueCorrect(envVar, client)) {
-                            System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect env " + envVar.getName());
-                        }
-                    });
+                    .forEach(envVar -> checkRabbitEnvVariable(pod, client, envVar));
+        }
+    }
+
+    private void checkWebPod (Pod pod, NamespacedKubernetesClient client) {
+        if (isPod(pod, "web")) {
+            checkEnvName(pod, WEB_ENV_LIST);
+        }
+    }
+
+    private void checkRabbitEnvVariable(Pod pod, NamespacedKubernetesClient client, EnvVar envVar) {
+        if (envVar.getName().equals("RABBIT_HOST")) {
+            CheckResult checkResult = checkRabbitHostEnvValue(envVar, client);
+            if (checkResult.hasError()) {
+                System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect env " + envVar.getName());
+                checkResult.printMessage();
+            }
+        }
+
+        if (envVar.getName().equals("RABBIT_PORT")) {
+            CheckResult checkResult = checkRabbitPortEnvValue(envVar, client);
+            if (checkResult.hasError()) {
+                System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect port: " + envVar.getValue());
+                checkResult.printMessage();
+            }
+        }
+
+        if (envVar.getName().equals("RABBIT_USERNAME")) {
+            CheckResult checkResult = checkRabbitUsernameOrPassword(envVar, value -> value.getName().equals("RABBIT_USERNAME") , client);
+            if (checkResult.hasError()) {
+                System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect rabbit user: " + envVar.getValue());
+                checkResult.printMessage();
+            }
+        }
+
+        if (envVar.getName().equals("RABBIT_PASSWORD")) {
+            CheckResult checkResult = checkRabbitUsernameOrPassword(envVar, value -> value.getName().equals("RABBIT_PASSWORD") , client);
+            if (checkResult.hasError()) {
+                System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect rabbit password: " + envVar.getValue());
+                checkResult.printMessage();
+            }
         }
     }
 
@@ -90,8 +126,9 @@ public class NamespaceWatcher {
         return pod.getMetadata().getName().startsWith(name);
     }
 
-    private boolean isRabbitHostEnvValueCorrect(EnvVar env, DefaultKubernetesClient client) {
+    private CheckResult checkRabbitHostEnvValue(EnvVar env, NamespacedKubernetesClient client) {
         String envValue = env.getValue();
+        CheckResult checkResult = new CheckResult();
         if (envValue.matches(IP_REGEX)) {
             String rabbitIp = client.pods()
                     .list()
@@ -102,14 +139,21 @@ public class NamespaceWatcher {
                     .get()
                     .getStatus()
                     .getPodIP();
-            return envValue.equals(rabbitIp);
+            if (!envValue.equals(rabbitIp)) {
+                checkResult.addMessage("Env " + env.getName() + " should be " + rabbitIp);
+            }
         } else {
-            return envValue.startsWith("rabbit");
+            if (!envValue.startsWith("rabbit")) {
+                checkResult.addMessage("Env " + env.getName() + " should start with rabbit");
+            }
         }
+
+        return checkResult;
     }
 
-    private boolean isRabbitPortEnvValueCorrect(EnvVar env, DefaultKubernetesClient client) {
+    private CheckResult checkRabbitPortEnvValue(EnvVar env, NamespacedKubernetesClient client) {
         String envValue = env.getValue();
+        CheckResult checkResult = new CheckResult();
         if (envValue.matches("[0-9]{4}")) {
             String rabbitPort = client.pods()
                     .list()
@@ -127,13 +171,16 @@ public class NamespaceWatcher {
                     .get()
                     .getContainerPort().toString();
 
-            return rabbitPort.equals(envValue);
+            if (!rabbitPort.equals(envValue)) {
+                checkResult.addMessage("Env " + env.getName() + " should be " + rabbitPort);
+            }
         }
-        return false;
+        return checkResult;
     }
 
-    private boolean isRabbitUsernameOrPasswordCorrect(EnvVar env, Predicate<EnvVar> rabbitDefaultEnv, DefaultKubernetesClient client) {
+    private CheckResult checkRabbitUsernameOrPassword(EnvVar env, Predicate<EnvVar> rabbitDefaultEnv, NamespacedKubernetesClient client) {
         String envValue = env.getValue();
+        CheckResult checkResult = new CheckResult();
         String rabbitUsername = client.pods()
                 .list()
                 .getItems()
@@ -149,11 +196,15 @@ public class NamespaceWatcher {
                 .findFirst()
                 .get()
                 .getValue();
-        return envValue.equals(rabbitUsername);
+        if (!envValue.equals(rabbitUsername)) {
+            checkResult.addMessage("Env " + env.getName() + " should be " + rabbitUsername);
+        }
+        return checkResult;
     }
 
-    private boolean isOrderServiceIpCorrect(EnvVar env, DefaultKubernetesClient client) {
+    private CheckResult checkOrderServiceIp(EnvVar env, NamespacedKubernetesClient client) {
         String envValue = env.getValue();
+        CheckResult checkResult = new CheckResult();
         if (envValue.matches(IP_REGEX)) {
             String rabbitIp = client.pods()
                     .list()
@@ -164,9 +215,15 @@ public class NamespaceWatcher {
                     .get()
                     .getStatus()
                     .getPodIP();
-            return envValue.equals(rabbitIp);
+            if (!envValue.equals(rabbitIp)) {
+                checkResult.addMessage("Env " + env.getName() + " should be " + rabbitIp);
+            }
         } else {
-            return envValue.startsWith("order");
+            if (!envValue.startsWith("order")) {
+                checkResult.addMessage("Env " + env.getName() + " should start with order");
+            }
         }
+
+        return checkResult;
     }
 }
