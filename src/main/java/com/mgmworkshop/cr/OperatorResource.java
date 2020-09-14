@@ -7,13 +7,13 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 @JsonDeserialize
 @RegisterForReflection
 public class OperatorResource extends CustomResource {
-    private OperatorResourceSpec operatorResourceSpec;
+    private OperatorResourceSpec spec;
 
-    public OperatorResourceSpec getOperatorResourceSpec() {
-        return operatorResourceSpec;
+    public OperatorResourceSpec getSpec() {
+        return spec;
     }
 
-    public void setOperatorResourceSpec(OperatorResourceSpec operatorResourceSpec) {
-        this.operatorResourceSpec = operatorResourceSpec;
+    public void setSpec(OperatorResourceSpec spec) {
+        this.spec = spec;
     }
 }

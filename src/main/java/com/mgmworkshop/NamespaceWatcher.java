@@ -31,31 +31,43 @@ public class NamespaceWatcher {
     MixedOperation<OperatorResource, OperatorResourceList, OperatorResourceDoneable, Resource<OperatorResource, OperatorResourceDoneable>> defaultClient;
 
     void onStartup(@Observes StartupEvent startupEvent) {
-        defaultClient.watch(new Watcher<OperatorResource>() {
+        defaultClient.watch(new Watcher<>() {
             @Override
             public void eventReceived(Action action, OperatorResource resource) {
-                resource.getOperatorResourceSpec().getNamespaces().forEach(ns -> {
+                resource.getSpec().getNamespaces().forEach(ns -> {
                     NamespacedKubernetesClient client = new DefaultKubernetesClient().inNamespace(ns);
-                    List<Pod> pods = client
+                    client
                             .pods()
-                            .list()
-                            .getItems();
+                            .watch(new Watcher<>() {
+                                @Override
+                                public void eventReceived(Action action, Pod pod) {
+                                    if (action.equals(Action.ADDED) || action.equals(Action.MODIFIED)) {
+                                        checkRabbitPod(pod);
+                                        checkOrderPod(pod, client);
+                                        checkWebPod(pod, client);
+                                    }
+                                }
 
-                    pods.forEach(pod -> {
-                        checkRabbitPod(pod);
-                        checkOrderPod(pod, client);
-                    });
+                                @Override
+                                public void onClose(KubernetesClientException cause) {
+                                    closeConnection(cause);
+                                }
+                            });
                 });
             }
 
             @Override
             public void onClose(KubernetesClientException cause) {
-                if (cause != null) {
-                    cause.printStackTrace();
-                    System.exit(-1);
-                }
+                closeConnection(cause);
             }
         });
+    }
+
+    private void closeConnection(KubernetesClientException cause) {
+        if (cause != null) {
+            cause.printStackTrace();
+            System.exit(-1);
+        }
     }
 
     private void checkRabbitPod(Pod pod) {
@@ -64,7 +76,7 @@ public class NamespaceWatcher {
         }
     }
 
-    private void checkOrderPod (Pod pod, NamespacedKubernetesClient client) {
+    private void checkOrderPod(Pod pod, NamespacedKubernetesClient client) {
         if (isPod(pod, "order")) {
             checkEnvName(pod, ORDER_ENV_LIST);
             pod.getSpec().getContainers().stream().findFirst()
@@ -73,9 +85,26 @@ public class NamespaceWatcher {
         }
     }
 
-    private void checkWebPod (Pod pod, NamespacedKubernetesClient client) {
+    private void checkWebPod(Pod pod, NamespacedKubernetesClient client) {
         if (isPod(pod, "web")) {
             checkEnvName(pod, WEB_ENV_LIST);
+            checkOrderPod(pod, client);
+            pod.getSpec().getContainers().stream().findFirst()
+                    .get().getEnv()
+                    .forEach(envVar -> {
+                        checkRabbitEnvVariable(pod, client, envVar);
+                        checkOrderEnvVariable(pod, client, envVar);
+                    });
+        }
+    }
+
+    private void checkOrderEnvVariable(Pod pod, NamespacedKubernetesClient client, EnvVar envVar) {
+        if (envVar.getName().equals("ORDER_SERVICE_HOST")) {
+            CheckResult checkResult = checkOrderServiceIp(envVar, client);
+            if (checkResult.hasError()) {
+                System.out.println("Pod " + pod.getMetadata().getName() + " in namespace " + pod.getMetadata().getNamespace() + " has incorrect env for order service");
+                checkResult.printMessage();
+            }
         }
     }
 
@@ -83,7 +112,7 @@ public class NamespaceWatcher {
         if (envVar.getName().equals("RABBIT_HOST")) {
             CheckResult checkResult = checkRabbitHostEnvValue(envVar, client);
             if (checkResult.hasError()) {
-                System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect env " + envVar.getName());
+                System.out.println("Pod " + pod.getMetadata().getName() + " in namespace " + pod.getMetadata().getNamespace() + " has incorrect env " + envVar.getName());
                 checkResult.printMessage();
             }
         }
@@ -91,23 +120,23 @@ public class NamespaceWatcher {
         if (envVar.getName().equals("RABBIT_PORT")) {
             CheckResult checkResult = checkRabbitPortEnvValue(envVar, client);
             if (checkResult.hasError()) {
-                System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect port: " + envVar.getValue());
+                System.out.println("Pod " + pod.getMetadata().getName() + " in namespace " + pod.getMetadata().getNamespace() + " has incorrect port: " + envVar.getValue());
                 checkResult.printMessage();
             }
         }
 
         if (envVar.getName().equals("RABBIT_USERNAME")) {
-            CheckResult checkResult = checkRabbitUsernameOrPassword(envVar, value -> value.getName().equals("RABBIT_USERNAME") , client);
+            CheckResult checkResult = checkRabbitUsernameOrPassword(envVar, value -> value.getName().equals("RABBITMQ_DEFAULT_USER"), client);
             if (checkResult.hasError()) {
-                System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect rabbit user: " + envVar.getValue());
+                System.out.println("Pod " + pod.getMetadata().getName() + " in namespace " + pod.getMetadata().getNamespace() + " has incorrect rabbit user: " + envVar.getValue());
                 checkResult.printMessage();
             }
         }
 
         if (envVar.getName().equals("RABBIT_PASSWORD")) {
-            CheckResult checkResult = checkRabbitUsernameOrPassword(envVar, value -> value.getName().equals("RABBIT_PASSWORD") , client);
+            CheckResult checkResult = checkRabbitUsernameOrPassword(envVar, value -> value.getName().equals("RABBITMQ_DEFAULT_PASS"), client);
             if (checkResult.hasError()) {
-                System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect rabbit password: " + envVar.getValue());
+                System.out.println("Pod " + pod.getMetadata().getName() + " in namespace " + pod.getMetadata().getNamespace() + " has incorrect rabbit password: " + envVar.getValue());
                 checkResult.printMessage();
             }
         }
@@ -115,10 +144,10 @@ public class NamespaceWatcher {
 
     private void checkEnvName(Pod pod, List<String> podEnv) {
         List<EnvVar> envList = pod.getSpec().getContainers().stream().findFirst().get().getEnv();
-        List<EnvVar> inCorrectEnvVar = envList.stream().filter(envVar -> !podEnv.contains(envVar.getValue()))
+        List<EnvVar> inCorrectEnvVar = envList.stream().filter(envVar -> !podEnv.contains(envVar.getName()))
                 .collect(Collectors.toList());
         inCorrectEnvVar.forEach(envVar -> {
-            System.out.println("Pod " + pod.getMetadata().getName() + " has incorrect env " + envVar.getName());
+            System.out.println("Pod " + pod.getMetadata().getName() + " in namespace " + pod.getMetadata().getNamespace() + " has incorrect env " + envVar.getName());
         });
     }
 
@@ -197,7 +226,7 @@ public class NamespaceWatcher {
                 .get()
                 .getValue();
         if (!envValue.equals(rabbitUsername)) {
-            checkResult.addMessage("Env " + env.getName() + " should be " + rabbitUsername);
+            checkResult.addMessage("Env " + env.getName() + " should have value equal " + rabbitUsername);
         }
         return checkResult;
     }
@@ -220,7 +249,7 @@ public class NamespaceWatcher {
             }
         } else {
             if (!envValue.startsWith("order")) {
-                checkResult.addMessage("Env " + env.getName() + " should start with order");
+                checkResult.addMessage("Env " + env.getName() + " should have value start with order");
             }
         }
 
