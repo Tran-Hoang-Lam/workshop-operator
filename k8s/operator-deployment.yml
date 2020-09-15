@@ -96,11 +96,3 @@ spec:
           ports:
             - containerPort: 8080
 ---
-apiVersion: mgmworkshop.com/v1
-kind: WorkshopOperator
-metadata:
-  name: workshop-operator-config
-  namespace: operator
-spec:
-  namespace:
-    - demo
