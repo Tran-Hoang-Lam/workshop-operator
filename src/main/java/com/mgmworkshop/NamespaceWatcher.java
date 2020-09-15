@@ -81,7 +81,10 @@ public class NamespaceWatcher {
             checkEnvName(pod, ORDER_ENV_LIST);
             pod.getSpec().getContainers().stream().findFirst()
                     .get().getEnv()
-                    .forEach(envVar -> checkRabbitEnvVariable(pod, client, envVar));
+                    .forEach(envVar -> {
+                        checkRuntimeArg(pod);
+                        checkRabbitEnvVariable(pod, client, envVar);
+                    });
         }
     }
 
@@ -92,6 +95,7 @@ public class NamespaceWatcher {
             pod.getSpec().getContainers().stream().findFirst()
                     .get().getEnv()
                     .forEach(envVar -> {
+                        checkRuntimeArg(pod);
                         checkRabbitEnvVariable(pod, client, envVar);
                         checkOrderEnvVariable(pod, client, envVar);
                     });
@@ -105,6 +109,18 @@ public class NamespaceWatcher {
                 System.out.println("Pod " + pod.getMetadata().getName() + " in namespace " + pod.getMetadata().getNamespace() + " has incorrect env for order service");
                 checkResult.printMessage();
             }
+        }
+    }
+
+    private void checkRuntimeArg(Pod pod) {
+        List<String> args = pod.getSpec().getContainers()
+                .stream()
+                .findFirst()
+                .get()
+                .getArgs();
+
+        if (args.isEmpty()) {
+            System.out.println("Pod " + pod.getMetadata().getName() + " in namespace " + pod.getMetadata().getNamespace() + " missing args");
         }
     }
 
