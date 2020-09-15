@@ -7,10 +7,12 @@ apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
   name: workshopoperators.mgmworkshop.com
-
 spec:
   group: mgmworkshop.com
-  version: v1
+  versions:
+    - name: v1
+      served: true
+      storage: true
   names:
     kind: WorkshopOperator
     plural: workshopoperators
@@ -32,19 +34,27 @@ rules:
       - list
       - watch
   - apiGroups:
-      - extensions
+      - apiextensions.k8s.io
     resources:
-      - ingresses
+      - customresourcedefinitions
     verbs:
       - get
       - list
       - watch
   - apiGroups:
-      - extensions
+      - traefik.containo.us
     resources:
-      - ingresses/status
+      - middlewares
+      - ingressroutes
+      - traefikservices
+      - ingressroutetcps
+      - ingressrouteudps
+      - tlsoptions
+      - tlsstores
     verbs:
-      - update
+      - get
+      - list
+      - watch
   - apiGroups:
       - mgmworkshop.com
     resources:
@@ -92,7 +102,6 @@ spec:
       containers:
         - image: lamth2/workshop-operator
           name: workshop-operator
-          imagePullPolicy: Never
           ports:
             - containerPort: 8080
 ---

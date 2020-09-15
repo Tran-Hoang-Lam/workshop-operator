@@ -27,7 +27,7 @@ public class OperatorConfiguration {
     @Singleton
     MixedOperation<OperatorResource, OperatorResourceList, OperatorResourceDoneable, Resource<OperatorResource, OperatorResourceDoneable>> defaultClient(KubernetesClient kubernetesClient) {
         KubernetesDeserializer.registerCustomKind("mgmworkshop.com/v1", "WorkshopOperator", OperatorResource.class);
-        CustomResourceDefinition crd = kubernetesClient.customResourceDefinitions().list().getItems().stream().findFirst().orElseThrow();
+        CustomResourceDefinition crd = kubernetesClient.customResourceDefinitions().list().getItems().stream().filter(customResourceDefinition -> "workshopoperators.mgmworkshop.com".equals(customResourceDefinition.getMetadata().getName())).findFirst().orElseThrow();
         return kubernetesClient.customResources(CustomResourceDefinitionContext.fromCrd(crd), OperatorResource.class, OperatorResourceList.class, OperatorResourceDoneable.class);
     }
 }
